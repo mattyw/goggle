@@ -5,6 +5,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -22,9 +26,16 @@ func (f *F) String() string {
 }
 
 func NewF(fd *ast.FuncDecl, fs *token.FileSet) *F {
+	params := []*ast.Field{}
+	results := []*ast.Field{}
 	pos := fd.Type.Func
-	params := fd.Type.Params.List
-	results := fd.Type.Results.List
+	if fd.Type.Params.List != nil {
+
+		params = fd.Type.Params.List
+	}
+	if fd.Type.Results != nil {
+		results = fd.Type.Results.List
+	}
 
 	input := []string{}
 	for _, i := range params {
@@ -40,31 +51,61 @@ func NewF(fd *ast.FuncDecl, fs *token.FileSet) *F {
 }
 
 func main() {
-	funcs := []*ast.FuncDecl{}
-	// src is the input for which we want to inspect the AST.
-	src := `
-package p
-const c = 1.0
-var X = f(3.14)*2 + c
-func foo(x,y int) int {
-    return x + y
+	p := os.Getenv("GOPATH")
+	if p == "" {
+		return
+	}
+	gopath := strings.Split(p, ":")
+	for i, d := range gopath {
+		gopath[i] = filepath.Join(d, "src")
+	}
+	r := runtime.GOROOT()
+	if r != "" {
+		gopath = append(gopath, r+"/src/pkg")
+	}
+	for _, path := range gopath {
+		funcs, err := walk(path)
+		if err != nil {
+			fmt.Printf("failed to walk %v", err)
+			return
+		}
+		fmt.Println(len(funcs))
+	}
 }
-func foo2(x int, y float64) int {
-    return x + y
-}
-func bar(x int, y int) (int, int) {
-    return x,y
-}
-`
 
-	// Create the AST by parsing src.
-	fset := token.NewFileSet() // positions are relative to fset
-	f, err := parser.ParseFile(fset, "src.go", src, 0)
+func walk(path string) ([]*F, error) {
+	funcs := []*F{}
+	walker := func(path string, info os.FileInfo, err error) error {
+		if filepath.Ext(path) == ".go" {
+			data, err := ioutil.ReadFile(path)
+			if err != nil {
+				return nil // Ignore error for now
+			}
+			f, err := inspectFile(path, string(data))
+			funcs = append(funcs, f...)
+			if err != nil {
+				return nil
+			}
+		}
+		return nil
+	}
+	err := filepath.Walk(path, walker)
 	if err != nil {
-		panic(err)
+		return nil, err
+	}
+	return funcs, nil
+}
+
+// TODO we probably need to return []F from here
+func inspectFile(filename, contents string) ([]*F, error) {
+	funcs := []*ast.FuncDecl{}
+	result := []*F{}
+	fset := token.NewFileSet() // positions are relative to fset
+	f, err := parser.ParseFile(fset, filename, contents, 0)
+	if err != nil {
+		return nil, err
 	}
 
-	// Inspect the AST and print all identifiers and literals.
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.FuncDecl:
@@ -74,7 +115,7 @@ func bar(x int, y int) (int, int) {
 	})
 	for _, f := range funcs {
 		fun := NewF(f, fset)
-		fmt.Println(fun.String())
+		result = append(result, fun)
 	}
-
+	return result, nil
 }
