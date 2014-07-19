@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -20,9 +21,14 @@ type F struct {
 	Pos    token.Pos
 }
 
+func (f *F) Key() string {
+	return fmt.Sprintf("%s %s", strings.Join(f.Input, ","), strings.Join(f.Output, ","))
+}
+
 func (f *F) String() string {
 	pos := f.fset.Position(f.Pos)
-	return fmt.Sprintf("%s (%s) %s", pos, strings.Join(f.Input, ","), strings.Join(f.Output, ","))
+	key := f.Key()
+	return fmt.Sprintf("%s %s %s", f.decl.Name, pos, key)
 }
 
 func NewF(fd *ast.FuncDecl, fs *token.FileSet) *F {
@@ -50,7 +56,23 @@ func NewF(fd *ast.FuncDecl, fs *token.FileSet) *F {
 	return &F{fset: fs, decl: fd, Input: input, Output: output, Pos: pos}
 }
 
+var (
+	searchTerm = flag.String("s", "", "item to search for")
+)
+
+func search(term string, coll []*F) []*F {
+	result := []*F{}
+	for _, item := range coll {
+		if term == item.Key() {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
 func main() {
+	flag.Parse()
+	results := []*F{}
 	p := os.Getenv("GOPATH")
 	if p == "" {
 		return
@@ -70,7 +92,13 @@ func main() {
 			return
 		}
 		fmt.Println(len(funcs))
+		results = append(results, search(*searchTerm, funcs)...)
 	}
+
+	for _, item := range results {
+		fmt.Println(item)
+	}
+	fmt.Printf("found %d results\n", len(results))
 }
 
 func walk(path string) ([]*F, error) {
